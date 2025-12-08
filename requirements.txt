@@ -1,0 +1,12 @@
+pandas>=2.0
+requests
+beautifulsoup4
+pyarrow
+fastparquet
+python-dateutil
+pytest
+python-dotenv
+s3fs
+pandera
+streamlit
+plotly
