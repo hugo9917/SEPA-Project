@@ -1,0 +1,21 @@
+[project]
+name = "sepa-pipeline"
+version = "1.0.0"
+description = "End-to-end data pipeline for Argentina's SEPA retail price data"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --strict-markers"
+markers = [
+    "network: hits the live government portal (deselect with '-m \"not network\"')",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501"]

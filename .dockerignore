@@ -1,6 +1,8 @@
-# Data (CRITICAL: Avoid context bloat)
+# Data and logs (CRITICAL: avoid shipping hundreds of MB of build context)
 data/
-!data/.gitkeep
+logs/
+minio-data/
+postgres-db-volume/
 
 # Python
 __pycache__/
@@ -9,35 +11,31 @@ __pycache__/
 *.so
 .Python
 env/
+venv/
+.venv/
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
+.eggs/
 
-# Git
-.git
-.gitignore
-.gitattributes
-
-# IDEs
-.vscode/
-.idea/
-
-# Testing
+# Tooling caches
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
 .coverage
 htmlcov/
 
-# Environment
+# Not needed at runtime
+tests/
+Makefile
+README.md
+docker-compose.yml
 .env
+.env.example
+
+# Git / IDE
+.git
+.gitignore
+.gitattributes
+.vscode/
+.idea/

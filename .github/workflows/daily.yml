@@ -1,0 +1,91 @@
+name: Ingesta diaria SEPA
+
+# The scheduler for the free deployment. Airflow plays this role in the Docker
+# stack; here GitHub's cron does, calling the same `python -m src.daily`
+# entrypoint against the same S3 API — only the storage endpoint changes.
+on:
+  schedule:
+    # 06:00 UTC = 03:00 ART. The portal publishes day D during the afternoon of
+    # day D, so this leaves a wide margin.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      max_days:
+        description: "Días hacia atrás a revisar (1-7)"
+        required: false
+        default: "7"
+      max_comercios:
+        description: "Comercios por día (0 = todos)"
+        required: false
+        default: "0"
+
+# A run can take a while; overlapping runs would race on the same S3 prefixes.
+concurrency:
+  group: sepa-daily
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330 # under GitHub's 6h ceiling, with room to report
+
+    env:
+      S3_ENDPOINT_URL: ${{ secrets.S3_ENDPOINT_URL }}
+      S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+      S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
+      S3_BUCKET: ${{ secrets.S3_BUCKET }}
+      # Cloudflare R2 only accepts "auto" as the region.
+      S3_REGION: auto
+      SEPA_BACKFILL_MAX_DAYS: ${{ github.event.inputs.max_days || '7' }}
+      SEPA_MAX_COMERCIOS: ${{ github.event.inputs.max_comercios || '0' }}
+      SEPA_LOG_LEVEL: INFO
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Instalar dependencias
+        run: pip install -r requirements-etl.txt
+
+      - name: Verificar credenciales
+        run: |
+          if [ -z "$S3_ENDPOINT_URL" ] || [ -z "$S3_ACCESS_KEY" ]; then
+            echo "::error::Faltan secrets. Cargá S3_ENDPOINT_URL, S3_ACCESS_KEY, S3_SECRET_KEY y S3_BUCKET."
+            exit 1
+          fi
+
+      - name: Ingesta + Gold
+        run: python -m src.daily --prune --report run-report.json
+
+      - name: Resumen
+        if: always()
+        run: |
+          if [ -f run-report.json ]; then
+            python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, pathlib
+          r = json.loads(pathlib.Path("run-report.json").read_text())
+          print(f"## Ingesta diaria — {'✅ OK' if r['ok'] else '❌ con fallas'}\n")
+          print(f"Duración: {r['seconds']} s\n")
+          print("| Dataset | Días nuevos | Fallidos | Bronze podado |")
+          print("| --- | --- | --- | --- |")
+          for tipo, e in r["tipos"].items():
+              c = e.get("catch_up") or {}
+              print(
+                  f"| {tipo} | {len(c.get('ingested', []))} | "
+                  f"{len(c.get('failed', []))} | {len(e.get('pruned', []))} |"
+              )
+          PY
+          fi
+
+      - name: Guardar reporte
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-report
+          path: run-report.json
+          retention-days: 30
+          if-no-files-found: ignore

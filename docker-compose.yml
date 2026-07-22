@@ -1,144 +1,180 @@
+# SEPA pipeline stack: Postgres + Airflow (LocalExecutor) + MinIO + Streamlit.
+#
+# Every Airflow service shares one definition through a YAML anchor so their
+# environment can never drift apart -- previously the scheduler was missing
+# settings the webserver had, and none of them received the S3 credentials.
+
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile.airflow
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    # The whole point of the stack is a daily ingest, so the DAG starts running
+    # instead of waiting for someone to flip it on in the UI.
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    # Without a stable key, every container restart invalidates stored
+    # connections and logs users out of the UI.
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-Zp8kfjP0Y3nH2sVxQwLmTgRcBdNaEuIoYkXzMvCbAhE=}
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-sepa-pipeline-dev-secret}
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    PYTHONPATH: /opt/airflow
+    # Data lake credentials, consumed by src/config.py.
+    S3_ENDPOINT_URL: http://minio:9000
+    S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+    S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    S3_BUCKET: ${S3_BUCKET:-sepa-datalake}
+    SEPA_CHUNK_SIZE: ${SEPA_CHUNK_SIZE:-250000}
+    # Set to a small number (e.g. 3) for a fast smoke test of the full stack.
+    SEPA_MAX_COMERCIOS: ${SEPA_MAX_COMERCIOS:-0}
+    # How many days back the daily run looks when closing gaps (0-7).
+    SEPA_BACKFILL_MAX_DAYS: ${SEPA_BACKFILL_MAX_DAYS:-7}
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./src:/opt/airflow/src
+    - ./data:/opt/airflow/data
+    - ./logs:/opt/airflow/logs
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    postgres:
+      condition: service_healthy
+    airflow-init:
+      condition: service_completed_successfully
+    minio:
+      condition: service_healthy
+
 services:
   postgres:
     image: postgres:13
     environment:
-      - POSTGRES_USER=airflow
-      - POSTGRES_PASSWORD=airflow
-      - POSTGRES_DB=airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
     healthcheck:
-      test: [ "CMD", "pg_isready", "-U", "airflow" ]
+      test: ["CMD", "pg_isready", "-U", "airflow"]
       interval: 5s
-      retries: 5
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
 
-  airflow-webserver:
-    build:
-      context: .
-      dockerfile: Dockerfile.airflow
-    command: webserver
-    ports:
-      - "8080:8080"
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
-      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=true
-      - AIRFLOW__CORE__LOAD_EXAMPLES=false
-      - PYTHONPATH=/opt/airflow
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./src:/opt/airflow/src
-      - ./data:/opt/airflow/data
-      - ./logs:/opt/airflow/logs
-    depends_on:
-      postgres:
-        condition: service_healthy
-      airflow-init:
-        condition: service_completed_successfully
-    healthcheck:
-      test: [ "CMD", "curl", "--fail", "http://localhost:8080/health" ]
-      interval: 10s
-      timeout: 10s
-      retries: 5
-
-  airflow-scheduler:
-    build:
-      context: .
-      dockerfile: Dockerfile.airflow
-    command: scheduler
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
-      - AIRFLOW__CORE__LOAD_EXAMPLES=false
-      - PYTHONPATH=/opt/airflow
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./src:/opt/airflow/src
-      - ./data:/opt/airflow/data
-      - ./logs:/opt/airflow/logs
-    depends_on:
-      postgres:
-        condition: service_healthy
-      airflow-init:
-        condition: service_completed_successfully
-
-  airflow-triggerer:
-    build:
-      context: .
-      dockerfile: Dockerfile.airflow
-    command: triggerer
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
-      - AIRFLOW__CORE__LOAD_EXAMPLES=false
-      - PYTHONPATH=/opt/airflow
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./src:/opt/airflow/src
-      - ./data:/opt/airflow/data
-      - ./logs:/opt/airflow/logs
-    depends_on:
-      postgres:
-        condition: service_healthy
-      airflow-init:
-        condition: service_completed_successfully
-
+  # Runs `airflow db migrate` and creates the admin user, then exits.
   airflow-init:
     build:
       context: .
       dockerfile: Dockerfile.airflow
-    command: version
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username "${AIRFLOW_ADMIN_USER:-admin}" \
+          --password "${AIRFLOW_ADMIN_PASSWORD:-admin}" \
+          --firstname Admin --lastname User --role Admin \
+          --email admin@example.com || true
+        # DAGS_ARE_PAUSED_AT_CREATION only applies the first time a DAG is
+        # registered, so this also un-pauses a stack upgraded from an older build.
+        airflow dags unpause sepa_pipeline || true
     environment:
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
-      - _AIRFLOW_DB_UPGRADE=true
-      - _AIRFLOW_WWW_USER_CREATE=true
-      - _AIRFLOW_WWW_USER_USERNAME=admin
-      - _AIRFLOW_WWW_USER_PASSWORD=admin
+      <<: *airflow-env
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./src:/opt/airflow/src
+      - ./data:/opt/airflow/data
+      - ./logs:/opt/airflow/logs
+    user: "${AIRFLOW_UID:-50000}:0"
     depends_on:
       postgres:
         condition: service_healthy
 
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+
+  airflow-triggerer:
+    <<: *airflow-common
+    command: triggerer
+    restart: unless-stopped
+
   minio:
-    image: minio/minio
+    image: minio/minio:RELEASE.2024-10-13T13-34-11Z
     ports:
       - "9000:9000"
       - "9001:9001"
     environment:
-      - MINIO_ROOT_USER=minioadmin
-      - MINIO_ROOT_PASSWORD=minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     volumes:
       - minio-data:/data
     command: server /data --console-address ":9001"
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
-      interval: 30s
-      timeout: 20s
-      retries: 3
+      # The MinIO image ships no curl/wget, so probe with its own client.
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
 
   createbuckets:
-    image: minio/mc
+    image: minio/mc:RELEASE.2024-10-08T09-37-26Z
     depends_on:
       minio:
         condition: service_healthy
+    # `mb --ignore-existing` keeps `docker compose up` idempotent; the original
+    # `mb` failed on every restart after the first.
     entrypoint: >
-      /bin/sh -c " /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin; /usr/bin/mc mb myminio/sepa-datalake; /usr/bin/mc anonymous set public myminio/sepa-datalake; exit 0; "
+      /bin/sh -c "
+      mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin} &&
+      mc mb --ignore-existing myminio/${S3_BUCKET:-sepa-datalake} &&
+      echo 'Bucket ready.'
+      "
 
   streamlit:
-    build: .
-    container_name: sepa-dashboard
-    command: streamlit run src/dashboard.py
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # No `container_name`: a fixed name collides with the one-off containers
+    # `docker compose run` creates, which is how the backfill CLI is invoked.
     ports:
       - "8501:8501"
     environment:
-      - S3_ENDPOINT_URL=http://minio:9000
-      - S3_ACCESS_KEY=minioadmin
-      - S3_SECRET_KEY=minioadmin
-      - PYTHONPATH=/app
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      S3_BUCKET: ${S3_BUCKET:-sepa-datalake}
+      PYTHONPATH: /app
     volumes:
-      - ./src:/app/src
+      - ./src:/app/src:ro
     depends_on:
       minio:
         condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   postgres-db-volume:

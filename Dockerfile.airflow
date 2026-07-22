@@ -1,11 +1,19 @@
-FROM apache/airflow:2.10.3
+# Airflow image with the pipeline's runtime dependencies.
+ARG AIRFLOW_VERSION=2.10.3
+ARG PYTHON_VERSION=3.11
+FROM apache/airflow:${AIRFLOW_VERSION}-python${PYTHON_VERSION}
 
-USER root
-# Install system dependencies if needed
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
+ARG AIRFLOW_VERSION
+ARG PYTHON_VERSION
 
 USER airflow
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+
+COPY requirements-etl.txt /tmp/requirements.txt
+
+# Installing against Airflow's constraints file is what keeps a transitive
+# dependency of pandas/s3fs from silently downgrading Airflow itself.
+RUN pip install --no-cache-dir \
+    --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-${AIRFLOW_VERSION}/constraints-${PYTHON_VERSION}.txt" \
+    -r /tmp/requirements.txt
+
+ENV PYTHONPATH=/opt/airflow

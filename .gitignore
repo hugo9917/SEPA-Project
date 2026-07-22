@@ -3,19 +3,27 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
-.env
 .venv
-env/
 venv/
+env/
 ENV/
-env.bak/
-venv.bak/
+build/
+dist/
+*.egg-info/
 
-# Environment Variables
+# Environment
 .env
+.env.local
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
 
 # Docker
-.docker_data/
 docker-compose.override.yml
 
 # Airflow
@@ -23,20 +31,22 @@ logs/
 airflow.cfg
 airflow.db
 unittests.cfg
+webserver_config.py
 
-# Data
+# Data / volumes
 data/
 minio-data/
 postgres-db-volume/
 temp/
 tmp/
+*.zip
+*.parquet
 
-# IDEs
+# Local tooling
+.claude/
+
+# IDEs / OS
 .idea/
 .vscode/
-
-# Project specific
-debug_html.py
-debug_output.txt
-*.log
 .DS_Store
+*.log

@@ -1,0 +1,19 @@
+# Pinned to a single light surface so every chart is validated against exactly
+# one background (see src/theme.py). Colours mirror the palette there.
+[theme]
+base = "light"
+primaryColor = "#1b7fc4"
+backgroundColor = "#eef3f9"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#0d1526"
+font = "sans serif"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
+showErrorDetails = true

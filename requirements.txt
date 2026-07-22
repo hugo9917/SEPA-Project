@@ -1,12 +1,20 @@
-pandas>=2.0
-requests
-beautifulsoup4
-pyarrow
-fastparquet
-python-dateutil
-pytest
-python-dotenv
-s3fs
-pandera
-streamlit
-plotly
+# Full application set: ETL + dashboard.
+#
+# Streamlit Community Cloud auto-detects this file by name and offers no way to
+# point at another, so it has to be self-contained -- an `-r requirements-etl.txt`
+# include would work with pip but makes the deployment depend on a detail of how
+# the platform invokes it.
+#
+# Versions track Apache Airflow 2.10.3's constraints file so the Airflow image
+# can be built with --constraint without a resolver conflict.
+pandas~=2.1.4
+pyarrow~=16.1.0
+requests~=2.32.3
+beautifulsoup4~=4.12.3
+python-dateutil~=2.9.0
+python-dotenv~=1.0.1
+s3fs~=2024.10.0
+pandera~=0.21.0
+multimethod~=1.12
+streamlit~=1.40.0
+plotly~=5.24.1

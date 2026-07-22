@@ -1,0 +1,18 @@
+# Core ETL set: no Streamlit, no Plotly. Used by the Airflow image and by the
+# GitHub Actions cron -- neither renders anything.
+#
+# Versions deliberately track Apache Airflow 2.10.3's constraints file so the
+# Airflow image can be built with --constraint without a resolver conflict.
+# See: https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-3.11.txt
+pandas~=2.1.4
+pyarrow~=16.1.0
+requests~=2.32.3
+beautifulsoup4~=4.12.3
+python-dateutil~=2.9.0
+python-dotenv~=1.0.1
+s3fs~=2024.10.0
+pandera~=0.21.0
+# pandera 0.21 declares an unbounded `multimethod` dependency, but multimethod
+# 2.0 dropped the `overload` export pandera imports at module load. Without this
+# pin a fresh build installs 2.x and every pandera import raises ImportError.
+multimethod~=1.12
